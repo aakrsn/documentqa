@@ -37,7 +37,7 @@ with open("input.txt", "r") as f:
 # # or a few related sentences with overlap
 
 # Fixed Size Chunking
-def chunk_text(text, chunk_size=10, overlap=2):
+def chunk_text(text, chunk_size=500, overlap=50):
     """ Chunk the input text into smaller pieces of specified size. """
     chunks = []
     for i in range(0, len(text), chunk_size):
@@ -50,7 +50,7 @@ def chunk_text(text, chunk_size=10, overlap=2):
 
 # text = "#If the chunk is too small, you may split a concept across multiple chunks and lose the surrounding facts that explain it."
 chunks = chunk_text(text)
-print(chunks)
+#print(chunks)
 print("**********************")
 print("Number of chunks:", len(chunks))
 
@@ -66,13 +66,106 @@ print("Number of chunks:", len(chunks))
 from sentence_transformers import SentenceTransformer
 
 model = SentenceTransformer(
-    "sentence-transformers/all-MiniLM-L6-v2"
+    "sentence-transformers/all-MiniLM-L6-v2",
+     local_files_only=True
 )
 
 embeddings = model.encode(
     chunks,
-    normalize_embeddings=True
+    normalize_embeddings=True,
+    show_progress_bar=True
 )
 
 print("******************************")
 print("Number of embeddings:", len(embeddings))
+print("type of the member in embeddings:", type(embeddings[0]))
+print(len(embeddings[0])) # 384, 384 dimension, the respective chunk is scaterred around 384 dimensions. 
+
+# the coloum in which we are storing the embeddings, the dimension of that column should be same as the dimensions produced by the model.
+
+import psycopg2
+
+conn = psycopg2.connect(
+    host="localhost",
+    port=5432,
+    database="ragapp",
+    user="ajaykrishna22",
+    password=""
+)
+
+cursor = conn.cursor()
+
+# cursor.execute("SELECT * FROM documents;")
+
+# records = cursor.fetchall()
+
+# print(type(records))
+
+# print(records)
+# print("******************************")
+
+# query = """
+#     INSERT INTO documents (workspace_id, body, embedding)
+#     VALUES (%s, %s, %s::vector);
+# """
+# workspace_id = 1
+
+# for chunk, embedding in zip(chunks, embeddings, strict=True):
+#     values = (workspace_id, chunk, embedding.tolist())
+#     cursor.execute(query, values)
+#     conn.commit()
+
+# cursor = conn.cursor()
+
+# cursor.execute("SELECT * FROM documents;")
+
+# records = cursor.fetchall()
+
+# print(type(records))
+
+# print(records)
+
+# conn.close()
+
+
+query = "What is the key reason behind our dreams?"
+
+# convert query into embeddings
+
+import json
+import numpy as np
+
+queries = []
+queries.append(query)
+query_embeddings = model.encode(
+    queries,
+    normalize_embeddings=True,
+    show_progress_bar=True
+)
+
+#cursor.execute("SELECT embedding::real[] FROM documents WHERE embedding IS NOT NULL;")
+
+cursor.execute("SELECT * from documents")
+
+records = cursor.fetchall()
+
+similarity_scores = []
+
+for i in range(len(records)):
+
+    embedding_values = records[i][3]
+
+    print(type(embedding_values))
+
+    embedding_record = np.asarray(json.loads(embedding_values), dtype=np.float32)
+    similarity_score = np.dot(embedding_record, query_embeddings[0])
+    similarity_scores.append(similarity_score)
+
+print(similarity_scores[0:10])
+
+top_k = 5
+nearest_indices = np.argsort(similarity_scores)[::-1][:top_k]
+
+for i in nearest_indices:
+    print(f"\nSimilarity: {similarity_scores[i]:.4f}")
+    print(records[i][2])
