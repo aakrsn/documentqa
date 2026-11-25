@@ -53,6 +53,7 @@ chunks = chunk_text(text)
 #print(chunks)
 print("**********************")
 print("Number of chunks:", len(chunks))
+print("Lenght of 1st chunks: ", len(chunks[0]))
 
 
 
@@ -63,7 +64,7 @@ print("Number of chunks:", len(chunks))
 
 
 
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 model = SentenceTransformer(
     "sentence-transformers/all-MiniLM-L6-v2",
@@ -104,16 +105,26 @@ cursor = conn.cursor()
 # print(records)
 # print("******************************")
 
+# ----------------------- Insert Query ------------------------
 # query = """
 #     INSERT INTO documents (workspace_id, body, embedding)
 #     VALUES (%s, %s, %s::vector);
 # """
+#---------------------------------------------------------------
+
+#-----------------------Update Query ---------------------------
+# query = """
+#     Update documents set body = %s, embedding = %s::vector where id = %s
+# """
+# #---------------------------------------------------------------
 # workspace_id = 1
 
+# chunk_id = 1
 # for chunk, embedding in zip(chunks, embeddings, strict=True):
-#     values = (workspace_id, chunk, embedding.tolist())
+#     values = (chunk, embedding.tolist(), chunk_id)
 #     cursor.execute(query, values)
 #     conn.commit()
+#     chunk_id = chunk_id + 1
 
 # cursor = conn.cursor()
 
@@ -143,29 +154,40 @@ query_embeddings = model.encode(
     show_progress_bar=True
 )
 
-#cursor.execute("SELECT embedding::real[] FROM documents WHERE embedding IS NOT NULL;")
-
-cursor.execute("SELECT * from documents")
+cursor.execute("""
+    SELECT id, body, embedding
+    FROM documents
+    WHERE embedding IS NOT NULL AND body IS NOT NULL
+""")
 
 records = cursor.fetchall()
+cursor.close()
+conn.close()
 
 similarity_scores = []
 
-for i in range(len(records)):
-
-    embedding_values = records[i][3]
-
-    print(type(embedding_values))
-
+for _, _, embedding_values in records:
     embedding_record = np.asarray(json.loads(embedding_values), dtype=np.float32)
     similarity_score = np.dot(embedding_record, query_embeddings[0])
     similarity_scores.append(similarity_score)
 
-print(similarity_scores[0:10])
-
-top_k = 5
+top_k = 20
 nearest_indices = np.argsort(similarity_scores)[::-1][:top_k]
 
-for i in nearest_indices:
-    print(f"\nSimilarity: {similarity_scores[i]:.4f}")
-    print(records[i][2])
+if nearest_indices.size:
+    # The cross-encoder scores the query against each candidate's original text.
+    reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L6-v2")
+    pairs = [(query, records[index][1]) for index in nearest_indices]
+    relevance_scores = reranker.predict(pairs)
+
+    final_k = 5
+    reranked_positions = np.argsort(-relevance_scores, kind="stable")[:final_k]
+    for rank, position in enumerate(reranked_positions, start=1):
+        index = nearest_indices[position]
+        chunk_id, chunk, _ = records[index]
+        print(f"\nRank {rank} | Chunk ID {chunk_id}")
+        print(f"Relevance: {relevance_scores[position]:.4f}")
+        print(f"Embedding similarity: {similarity_scores[index]:.4f}")
+        print(chunk)
+else:
+    print("No chunks found to rerank.")
