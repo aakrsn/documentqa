@@ -37,7 +37,7 @@ with open("input.txt", "r") as f:
 # # or a few related sentences with overlap
 
 # Fixed Size Chunking
-def chunk_text(text, chunk_size=500, overlap=50):
+def chunk_text(text, chunk_size=100, overlap=20):
     """ Chunk the input text into smaller pieces of specified size. """
     chunks = []
     for i in range(0, len(text), chunk_size):
